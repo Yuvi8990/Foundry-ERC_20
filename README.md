@@ -23,7 +23,7 @@ A fixed-supply ERC-20 token built on OpenZeppelin and tested with Foundry, plus 
 6. [Study notes](#-6-study-notes)
    - [6.1 What ERC-20 requires](#-61-what-erc-20-requires)
    - [6.2 How allowances work](#-62-how-allowances-work)
-   - [6.3 Walkthrough of `ManualToken`](#-63-walkthrough-of-manualtoken)
+   - [6.3 Core functions and caller mechanics](#-63-core-functions--caller-mechanics)
 7. [License and acknowledgements](#-7-license-and-acknowledgements)
 
 ---
@@ -244,23 +244,18 @@ With `decimals` set to 18, one token is `10^18` smallest units. In Solidity, `10
 
 Some actions need a contract to move tokens for you, such as a swap on an exchange. Instead of handing over your tokens, you call `approve(spender, amount)`, which records how much that spender may take. Later, the spender calls `transferFrom(owner, to, amount)`, and the token checks two things: the owner has enough balance, and the spender's allowance covers the amount. Each successful call lowers the allowance by the amount spent. The tests cover a normal use (`testTransferFromWithinAllowance`) and both failure cases: too little allowance and too little balance.
 
-### 🛠️ 6.3 Walkthrough of `ManualToken`
+### ⚙️ 6.3 Core Functions & Caller Mechanics
 
-```solidity
-function transfer(address _to, uint256 _amount) public {
-    uint256 previousBalances = balanceOf(msg.sender) + balanceOf(_to);
-    s_balances[msg.sender] -= _amount;
-    s_balances[_to] += _amount;
-    require(balanceOf(msg.sender) + balanceOf(_to) == previousBalances);
-}
-```
+At the EVM level, an ERC-20 token is a ledger mapping where each function defines a specific caller role:
 
-- **`s_balances`** is a private mapping from address to balance, read through `balanceOf`.
-- **`name`, `totalSupply` and `decimals`** are `pure` because they return constants and read no storage.
-- **`transfer`** subtracts from the sender and adds to the recipient. If the sender's balance is too small, the subtraction reverts, because Solidity 0.8 checks arithmetic automatically.
-- **The `require` at the end** states that tokens are only moved, never created or destroyed. It is a useful thing to write down, but as noted in the limitations, it cannot fail in this version.
+- **`transfer(to, amount)`**: Called directly by the token owner (`msg.sender`) to update balances (`_balances[msg.sender] -= amount`, `_balances[to] += amount`).
+- **`_mint(account, amount)`**: An internal creation function run during the constructor to bring tokens into existence from `address(0)` and assign the initial supply to an address so they can be held and traded. It has no public interface, keeping the supply capped.
+- **`totalSupply()` and `balanceOf(account)`**: Public view queries that read the global supply and the caller's entry in the single mapping ledger.
+- **`approve(spender, amount)`**: Called by the token owner to set a spending ceiling for a mediator inside the nested ledger (`_allowances[owner][spender] = amount`). No tokens move here.
+- **`allowance(owner, spender)`**: A public view query performing a two-key lookup into the nested mapping to inspect remaining spending rights.
+- **`transferFrom(from, to, amount)`**: The transfer function for the mediator (`msg.sender`). It verifies that the mediator's allowance covers the amount, decreases that allowance, and moves balance from the owner (`from`) to the destination (`to`).
 
-Writing this by hand made it clear how much work the standard and OpenZeppelin do: allowances, events, return values, zero-address checks and clear errors are all things this version skips.
+All of these can be called directly on an instance as `ourToken.<function>()`, with `_mint` kept internal so arbitrary users cannot print unbacked tokens.
 
 ---
 
